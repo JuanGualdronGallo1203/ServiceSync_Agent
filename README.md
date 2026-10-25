@@ -71,7 +71,9 @@ graph TD
 
 2. **`gestionar_cita_calendar` (`src/tools/calendar_tool.py`):**
    - Conexión con Google Calendar API mediante Service Account.
-   - Detecta colisiones horarias (`singleEvents=True`, `timeMin`/`timeMax`). Si está libre, crea el evento y retorna enlace.
+   - Parámetros dinámicos `fecha_hora_inicio` y `fecha_hora_fin` con soporte para bloques multihorarios.
+   - Zona horaria explícita `America/Bogota` (UTC-05:00) en eventos y offsets `timeMin`/`timeMax`.
+   - Detección inteligente de duplicados (idempotencia por cliente en el `summary`) y prevención de colisiones con otros clientes.
 
 3. **`notificar_confirmacion_n8n` (`src/tools/notification.py`):**
    - Envío de payload JSON mediante `httpx` hacia el Webhook de n8n.
