@@ -79,14 +79,19 @@ def consultar_inventario_supabase(servicio: Optional[str] = None) -> str:
             response = query.execute()
             data = response.data
         else:
-            # Modo fallback local para pruebas/demostración
-            if servicio:
-                srv_lower = servicio.lower()
-                data = [s for s in MOCK_SERVICIOS_DB if srv_lower in s["nombre"].lower() or any(w in s["nombre"].lower() for w in srv_lower.split())]
-                if not data:
+            # Consulta SQL real sobre la base de datos local SQLite (data/servicios.db)
+            try:
+                from src.local_db import query_local_services
+                data = query_local_services(servicio)
+            except Exception:
+                # Fallback seguro en memoria si SQLite tuviese alguna eventualidad
+                if servicio:
+                    srv_lower = servicio.lower()
+                    data = [s for s in MOCK_SERVICIOS_DB if srv_lower in s["nombre"].lower() or any(w in s["nombre"].lower() for w in srv_lower.split())]
+                    if not data:
+                        data = MOCK_SERVICIOS_DB
+                else:
                     data = MOCK_SERVICIOS_DB
-            else:
-                data = MOCK_SERVICIOS_DB
 
         if not data:
             return (
@@ -107,3 +112,4 @@ def consultar_inventario_supabase(servicio: Optional[str] = None) -> str:
     except Exception:
         # Requisito estricto Fase 2
         return "Error en BD: Indica al usuario que los sistemas de precios están en mantenimiento, pero invítalo al taller."
+

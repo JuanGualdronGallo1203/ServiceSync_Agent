@@ -32,3 +32,8 @@ build/
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Database files
+*.db
+*.sqlite3
+*.db-journal

@@ -126,5 +126,23 @@ class TestHitoS2ToolsAndGraph(unittest.TestCase):
         self.assertEqual(should_continue(state_with_tool), "tools")
 
 
+
+    def test_local_sqlite_database(self):
+        """Verifica que la base de datos local SQLite cree la tabla y responda consultas SQL reales."""
+        from src.local_db import query_local_services, init_local_database
+        db_path = init_local_database()
+        self.assertTrue(db_path.exists())
+
+        # Consulta de todos los servicios
+        all_services = query_local_services()
+        self.assertGreaterEqual(len(all_services), 5)
+
+        # Consulta con filtro SQL
+        frenos = query_local_services("frenos")
+        self.assertTrue(any("Frenos" in s["nombre"] for s in frenos))
+        self.assertEqual(frenos[0]["precio_base"], 180.0)
+
+
 if __name__ == "__main__":
     unittest.main()
+
