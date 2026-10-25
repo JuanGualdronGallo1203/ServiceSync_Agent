@@ -1,6 +1,10 @@
 """
-Configuración centralizada para ServiceSync Agent.
-Maneja variables de entorno, credenciales y parámetros de conexión hacia Plática.
+Configuración centralizada para ServiceSync Agent (Hitos S1 y S2).
+Maneja variables de entorno, credenciales y parámetros de conexión hacia:
+- Plática API (grok-4.6)
+- Supabase (Inventario y cotizaciones en tiempo real)
+- Google Calendar (Service Account para agendamiento de citas)
+- n8n (Webhook para notificaciones automáticas por WhatsApp)
 """
 
 import os
@@ -25,6 +29,22 @@ MODEL_NAME = os.getenv("MODEL_NAME", "grok-4.6")
 # Parámetros operativos del modelo
 DEFAULT_TEMPERATURE = float(os.getenv("DEFAULT_TEMPERATURE", "0.2"))
 DEFAULT_MAX_TOKENS = int(os.getenv("DEFAULT_MAX_TOKENS", "1024"))
+
+# Parámetros Supabase (Hito S2)
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
+
+# Parámetros Google Calendar API (Hito S2)
+GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
+GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary").strip()
+
+# Parámetros n8n Webhook (Hito S2)
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "").strip()
+
+# Banderas de simulación para pruebas de resiliencia y errores
+SIMULATE_SUPABASE_ERROR = os.getenv("SIMULATE_SUPABASE_ERROR", "false").lower() == "true"
+SIMULATE_CALENDAR_ERROR = os.getenv("SIMULATE_CALENDAR_ERROR", "false").lower() == "true"
+SIMULATE_N8N_ERROR = os.getenv("SIMULATE_N8N_ERROR", "false").lower() == "true"
 
 
 def get_http_headers() -> dict[str, str]:

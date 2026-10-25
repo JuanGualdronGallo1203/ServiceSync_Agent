@@ -8,6 +8,8 @@ env/
 .env
 .env*.local
 !.env.example
+credentials/
+*service_account*.json
 
 # Python cache & artifacts
 __pycache__/
