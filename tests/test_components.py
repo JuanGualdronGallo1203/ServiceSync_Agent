@@ -60,6 +60,7 @@ class TestServiceSyncComponents(unittest.TestCase):
         # Verificar nodos en el grafo
         nodes = app.get_graph().nodes
         self.assertIn("call_model", nodes)
+        self.assertIn("tools", nodes)
         self.assertIn("process_state", nodes)
 
     def test_process_state_node(self):

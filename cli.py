@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.prompt import Prompt
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage
 
 from src.config import RETO_KEY, API_BASE_URL, MODEL_NAME, validate_config
 from src.graph import graph_app
@@ -29,11 +29,11 @@ console = Console(highlight=False)
 
 def print_banner():
     banner_text = (
-        "[bold cyan]ServiceSync Agent - Terminal CLI (Hito S1)[/bold cyan]\n"
-        "[dim]Asistente Operativo Automotriz inteligente con memoria persistente[/dim]\n\n"
+        "[bold cyan]ServiceSync Agent - Terminal CLI (Hitos S1 y S2)[/bold cyan]\n"
+        "[dim]Asistente Operativo Automotriz inteligente con herramientas reales y memoria persistente[/dim]\n\n"
         f"• [bold]Endpoint:[/bold] {API_BASE_URL}\n"
         f"• [bold]Modelo:[/bold] {MODEL_NAME}\n"
-        f"• [bold]Headers:[/bold] Authorization: Bearer $RETO_KEY | Content-Type: application/json\n"
+        f"• [bold]Herramientas Reales:[/bold] Supabase (Inventario) | Google Calendar (Citas) | n8n (WhatsApp)\n"
         "• [bold]Comandos:[/bold] [yellow]/help[/yellow], [yellow]/reset[/yellow], [yellow]/history[/yellow], [yellow]/status[/yellow], [yellow]/exit[/yellow]"
     )
     console.print(Panel(banner_text, border_style="cyan", title="[bold]ServiceSync[/bold]"))
@@ -66,7 +66,14 @@ def show_history(thread_id: str):
             if isinstance(msg, HumanMessage):
                 console.print(f"[bold cyan][{idx}] Cliente:[/bold cyan] {msg.content}")
             elif isinstance(msg, AIMessage):
-                console.print(f"[bold magenta][{idx}] ServiceSync Agent:[/bold magenta] {msg.content}")
+                if msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        console.print(f"[dim yellow][{idx}] 🛠️ Invocación de Herramienta: {tc.get('name')}({tc.get('args')})[/dim yellow]")
+                if msg.content:
+                    console.print(f"[bold magenta][{idx}] ServiceSync Agent:[/bold magenta] {msg.content}")
+            elif isinstance(msg, ToolMessage):
+                tool_name = msg.name or "herramienta"
+                console.print(f"[dim green][{idx}] ⚙️ Retorno {tool_name}:[/dim green] {msg.content}")
             elif isinstance(msg, SystemMessage):
                 console.print(f"[dim][{idx}] System Prompt ({len(msg.content)} caracteres)[/dim]")
         console.print("")
@@ -137,6 +144,12 @@ def main():
 
             messages = result.get("messages", [])
             error = result.get("error")
+
+            # Resumen de herramientas ejecutadas en el turno
+            executed_tools = [m.name for m in messages if isinstance(m, ToolMessage) and m.name]
+            if executed_tools:
+                tools_display = ", ".join(f"[bold]{t}[/bold]" for t in executed_tools)
+                console.print(f"[dim cyan]🔧 Herramientas consultadas:[/dim cyan] {tools_display}")
 
             if messages and isinstance(messages[-1], AIMessage):
                 ai_text = messages[-1].content
