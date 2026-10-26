@@ -43,22 +43,37 @@ class TestHitoS2ToolsAndGraph(unittest.TestCase):
 
     def test_calendar_success_and_conflict(self):
         """Verifica agendamiento con duración dinámica, detección de duplicados (idempotencia) y colisiones."""
+        import uuid
+        import random
+        uid = uuid.uuid4().hex[:6]
+        test_day = random.randint(1, 28)
+        test_month = random.randint(1, 12)
+        test_year = 2029
+        c1 = f"TestClient_{uid}"
+        c2 = f"OtherClient_{uid}"
+        fecha_ini = f"{test_year}-{test_month:02d}-{test_day:02d} 10:00"
+        fecha_fin = f"{test_year}-{test_month:02d}-{test_day:02d} 12:00"
+        fecha_ini_dup = f"{test_year}-{test_month:02d}-{test_day:02d} 10:30"
+        fecha_fin_dup = f"{test_year}-{test_month:02d}-{test_day:02d} 11:30"
+        fecha_ini_col = f"{test_year}-{test_month:02d}-{test_day:02d} 11:00"
+        fecha_fin_col = f"{test_year}-{test_month:02d}-{test_day:02d} 13:00"
+
         # 1. Agendar en horario libre con bloque dinámico de 2 horas (10:00 a 12:00)
         res1 = gestionar_cita_calendar.invoke({
-            "fecha_hora_inicio": "2026-11-01 10:00",
-            "fecha_hora_fin": "2026-11-01 12:00",
-            "cliente": "Pedro Infante",
+            "fecha_hora_inicio": fecha_ini,
+            "fecha_hora_fin": fecha_fin,
+            "cliente": c1,
             "servicio": "Cambio de Aceite"
         })
         self.assertIn("Cita confirmada exitosamente", res1)
         self.assertIn("Enlace de confirmación", res1)
-        self.assertIn("hora Bogotá", res1)
+        self.assertTrue("hora Colombia" in res1 or "hora Bogotá" in res1)
 
         # 2. Re-agendamiento por el mismo cliente (Idempotencia / Evita duplicados sin error)
         res_dup = gestionar_cita_calendar.invoke({
-            "fecha_hora_inicio": "2026-11-01 10:30",
-            "fecha_hora_fin": "2026-11-01 11:30",
-            "cliente": "Pedro Infante",
+            "fecha_hora_inicio": fecha_ini_dup,
+            "fecha_hora_fin": fecha_fin_dup,
+            "cliente": c1,
             "servicio": "Cambio de Aceite"
         })
         self.assertIn("Cita ya registrada previamente", res_dup)
@@ -66,9 +81,9 @@ class TestHitoS2ToolsAndGraph(unittest.TestCase):
 
         # 3. Intentar agendar en el mismo horario por otro cliente (Colisión de disponibilidad)
         res2 = gestionar_cita_calendar.invoke({
-            "fecha_hora_inicio": "2026-11-01 11:00",
-            "fecha_hora_fin": "2026-11-01 13:00",
-            "cliente": "Jorge Negrete",
+            "fecha_hora_inicio": fecha_ini_col,
+            "fecha_hora_fin": fecha_fin_col,
+            "cliente": c2,
             "servicio": "Frenos"
         })
         self.assertIn("Conflicto de disponibilidad", res2)

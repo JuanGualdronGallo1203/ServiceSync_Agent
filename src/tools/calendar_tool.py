@@ -1,63 +1,65 @@
 """
 Herramienta de agendamiento y verificación de disponibilidad en Google Calendar.
 Conexión mediante Service Account de Google.
-Detecta superposiciones de eventos, evita duplicados (idempotencia por cliente)
-y gestiona errores estrictos para Hito S2.
+Garantiza:
+1. Parámetros obligatorios fecha_hora_inicio y fecha_hora_fin (sin valores por defecto).
+2. Limpieza estricta de cualquier rastro de UTC (Z, offsets) para manejar datetimes ingenuos (naive).
+3. Inyección en Google Calendar con formato ISO (%Y-%m-%dT%H:%M:%S) y timeZone "America/Bogota".
+4. Detección inteligente de duplicados (idempotencia por cliente) y detección de conflictos.
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import datetime
 from typing import Optional
 from langchain_core.tools import tool
 
-# Zona horaria operativa del taller.
-# Bogotá no aplica horario de verano, por lo que el offset fijo -05:00 es exacto
-# y evita depender del paquete 'tzdata' en Windows.
 TIMEZONE_NAME = "America/Bogota"
-TZ_BOGOTA = timezone(timedelta(hours=-5), name=TIMEZONE_NAME)
 
-# Almacén de citas en memoria para pruebas y demostraciones locales
+# Almacén de citas en memoria para pruebas y demostraciones locales cuando no hay credenciales
 _MOCK_CALENDAR_EVENTS: list[dict] = []
 
 _DATE_FORMATS = [
-    "%Y-%m-%d %H:%M",
     "%Y-%m-%dT%H:%M:%S",
-    "%Y-%m-%dT%H:%M",
     "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%dT%H:%M",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d",
 ]
 
 
 def _parse_local_datetime(dt_str: str) -> datetime:
     """
-    Convierte una cadena de fecha/hora en un datetime 'naive' interpretado como hora local de Bogotá.
-    Ignora sufijos 'Z' u offsets enviados por el modelo para evitar desfases.
-    Lanza ValueError si el formato no es reconocible.
+    Limpia forzosamente cualquier información de zona horaria ('Z', '+00:00', '-05:00', etc.)
+    y retorna un objeto datetime estrictamente ingenuo (naive).
+    Esto garantiza que las 17:00 enviadas por el usuario se interpreten como 17:00 ingenuas,
+    evitando que Python o Google resten 5 horas asumiéndolas como UTC.
     """
-    clean_str = dt_str.strip().replace("Z", "")
-    # Remover offset explícito (+HH:MM / -HH:MM) posterior a la hora, si existe
-    if "T" in clean_str or " " in clean_str:
-        sep = "T" if "T" in clean_str else " "
-        date_part, time_part = clean_str.split(sep, 1)
-        for sign in ("+", "-"):
-            if sign in time_part:
-                time_part = time_part.split(sign)[0]
-        clean_str = f"{date_part}{sep}{time_part}"
+    clean_str = str(dt_str).strip()
+
+    # 1. Quitar 'Z' o 'z' al final
+    clean_str = re.sub(r"[zZ]$", "", clean_str)
+
+    # 2. Quitar offsets numéricos al final (+HH:MM, -HH:MM, +HHMM, -HHMM)
+    clean_str = re.sub(r"([+-]\d{2}:?\d{2})$", "", clean_str)
+
+    # 3. Quitar fracciones de segundo (.000, .123456)
+    clean_str = re.sub(r"\.\d+", "", clean_str)
+
+    clean_str = clean_str.strip()
 
     for fmt in _DATE_FORMATS:
         try:
-            return datetime.strptime(clean_str, fmt)
+            dt = datetime.strptime(clean_str, fmt)
+            return dt.replace(tzinfo=None)
         except ValueError:
             continue
+
     raise ValueError(f"Formato de fecha/hora no reconocido: '{dt_str}'")
 
 
-def _to_rfc3339_with_offset(dt: datetime) -> str:
-    """Formato RFC3339 con offset de Bogotá (ej. 2026-10-26T10:00:00-05:00) para timeMin/timeMax."""
-    return dt.replace(tzinfo=TZ_BOGOTA).isoformat()
-
-
 def _client_matches(cliente: str, summary: str) -> bool:
-    """Determina si el nombre del cliente está contenido en el summary del evento (sin distinguir mayúsculas)."""
+    """Determina si el nombre del cliente está contenido en el summary del evento (case-insensitive)."""
     return bool(cliente.strip()) and cliente.strip().lower() in (summary or "").lower()
 
 
@@ -71,12 +73,16 @@ def gestionar_cita_calendar(
 ) -> str:
     """
     Verifica disponibilidad y agenda una cita en Google Calendar para un servicio automotriz.
-    Usa hora local de Bogotá (America/Bogota, UTC-05:00). Permite bloques de varias horas.
-    Si ya existe una cita del mismo cliente en ese rango, no la duplica.
+    
+    IMPORTANTE: 'fecha_hora_inicio' y 'fecha_hora_fin' son AMBAS OBLIGATORIAS.
+    Debes enviar ambas en hora local de Colombia (America/Bogota), formato 'YYYY-MM-DDTHH:MM:SS'
+    o 'YYYY-MM-DD HH:MM'. NUNCA agregues 'Z' ni conviertas a UTC.
+    Si el cliente no especifica la hora de fin, calcula 'fecha_hora_fin' sumando la duración
+    estimada del servicio (obtenida de Supabase) o 1 hora por defecto.
 
     Args:
-        fecha_hora_inicio: Fecha y hora de inicio en hora local (ej. '2026-10-26 10:00' o '2026-10-26T10:00:00').
-        fecha_hora_fin: Fecha y hora de finalización en hora local (ej. '2026-10-26 12:00'). Debe ser posterior al inicio.
+        fecha_hora_inicio: Fecha y hora de inicio de la cita en hora local de Colombia (ej. '2026-10-26T10:00:00' o '2026-10-26 10:00').
+        fecha_hora_fin: Fecha y hora de finalización de la cita en hora local de Colombia (ej. '2026-10-26T11:30:00' o '2026-10-26 11:30').
         cliente: Nombre completo del cliente o propietario del vehículo.
         servicio: Nombre del servicio mecánico a realizar.
         vehiculo: Marca, modelo o placas del vehículo (opcional).
@@ -85,25 +91,29 @@ def gestionar_cita_calendar(
     if os.getenv("SIMULATE_CALENDAR_ERROR", "false").lower() == "true":
         return "Error en Calendario: Dile al usuario que no es posible agendar digitalmente en este instante."
 
-    # 2. Validación de entrada (errores de datos, no de infraestructura)
+    # 2. Validación y limpieza estricta a datetime ingenuo (naive)
     try:
         start_dt = _parse_local_datetime(fecha_hora_inicio)
         end_dt = _parse_local_datetime(fecha_hora_fin)
     except ValueError:
         return (
             "Datos inválidos: no se pudo interpretar la fecha/hora. "
-            "Solicita al cliente la fecha y hora en formato 'AAAA-MM-DD HH:MM'."
+            "Debes proporcionar 'fecha_hora_inicio' y 'fecha_hora_fin' en formato 'AAAA-MM-DD HH:MM'."
         )
 
     if end_dt <= start_dt:
         return (
             "Datos inválidos: la hora de finalización debe ser posterior a la hora de inicio. "
-            "Verifica el rango horario con el cliente."
+            "Verifica el rango horario de la cita."
         )
 
-    rango_legible = f"{start_dt.strftime('%Y-%m-%d %H:%M')} a {end_dt.strftime('%H:%M')} (hora Bogotá)"
+    # Formatos string ingenuos exactos (sin 'Z') para Google Calendar
+    start_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%S")
+    end_iso = end_dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+    rango_legible = f"{start_dt.strftime('%Y-%m-%d %H:%M')} a {end_dt.strftime('%H:%M')} (hora Colombia)"
     if start_dt.date() != end_dt.date():
-        rango_legible = f"{start_dt.strftime('%Y-%m-%d %H:%M')} a {end_dt.strftime('%Y-%m-%d %H:%M')} (hora Bogotá)"
+        rango_legible = f"{start_dt.strftime('%Y-%m-%d %H:%M')} a {end_dt.strftime('%Y-%m-%d %H:%M')} (hora Colombia)"
 
     try:
         creds_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "").strip()
@@ -118,11 +128,14 @@ def gestionar_cita_calendar(
             creds = Credentials.from_service_account_file(creds_file, scopes=scopes)
             service = build("calendar", "v3", credentials=creds, cache_discovery=False)
 
-            # 3. Consulta de disponibilidad con offset explícito -05:00
+            # Consulta de disponibilidad con offset explícito de Bogotá (-05:00)
+            time_min_str = f"{start_iso}-05:00"
+            time_max_str = f"{end_iso}-05:00"
+
             events_result = service.events().list(
                 calendarId=calendar_id,
-                timeMin=_to_rfc3339_with_offset(start_dt),
-                timeMax=_to_rfc3339_with_offset(end_dt),
+                timeMin=time_min_str,
+                timeMax=time_max_str,
                 timeZone=TIMEZONE_NAME,
                 singleEvents=True,
                 orderBy="startTime"
@@ -130,7 +143,7 @@ def gestionar_cita_calendar(
 
             items = events_result.get("items", [])
 
-            # 4. Idempotencia: si el mismo cliente ya tiene un evento en el rango, no duplicar
+            # Idempotencia: si el mismo cliente ya tiene un evento en este rango, no duplicar
             for item in items:
                 summary = item.get("summary", "")
                 if _client_matches(cliente, summary):
@@ -141,7 +154,7 @@ def gestionar_cita_calendar(
                         f"Enlace de la cita existente: {link}"
                     )
 
-            # 5. Conflicto real: el horario pertenece a otro cliente
+            # Conflicto real: el horario está ocupado por otro cliente
             if items:
                 ocupado_por = items[0].get("summary", "Cita existente")
                 return (
@@ -150,12 +163,18 @@ def gestionar_cita_calendar(
                     "Por favor solicita al cliente que elija otra fecha u hora disponible."
                 )
 
-            # 6. Inserción del evento: ISO local sin 'Z' + timeZone explícito
+            # Inserción con datetime ingenuo en string ISO y timeZone explícito America/Bogota
             event_body = {
                 "summary": f"ServiceSync: {servicio} - {cliente}",
                 "description": f"Servicio: {servicio}\nCliente: {cliente}\nVehículo: {vehiculo}\nAgendado por: ServiceSync Agent",
-                "start": {"dateTime": start_dt.isoformat(), "timeZone": TIMEZONE_NAME},
-                "end": {"dateTime": end_dt.isoformat(), "timeZone": TIMEZONE_NAME},
+                "start": {
+                    "dateTime": start_iso,
+                    "timeZone": TIMEZONE_NAME
+                },
+                "end": {
+                    "dateTime": end_iso,
+                    "timeZone": TIMEZONE_NAME
+                },
             }
             created_event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
             link = created_event.get("htmlLink", f"https://calendar.google.com/calendar/event?eid={created_event.get('id')}")
@@ -166,7 +185,7 @@ def gestionar_cita_calendar(
             )
 
         else:
-            # Modo demostración y pruebas locales: replica la misma lógica de solapamiento e idempotencia
+            # Modo demostración y pruebas locales en memoria
             overlapping = [
                 evt for evt in _MOCK_CALENDAR_EVENTS
                 if evt["start"] < end_dt and start_dt < evt["end"]
